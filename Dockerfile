@@ -11,5 +11,6 @@ FROM debian:bookworm-slim
 WORKDIR /app
 
 COPY --from=builder /app/main .
+COPY .env .env
 
 ENTRYPOINT ["./main"]

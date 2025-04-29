@@ -3,19 +3,23 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"unicode"
 
-	"github.com/marcofilho/go-city-temperature-identifier/configs"
+	"github.com/spf13/viper"
 	"golang.org/x/text/runes"
 	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
 )
+
+type conf struct {
+	API_KEY string `mapstructure:"API_KEY"`
+}
 
 type Location struct {
 	Name           string  `json:"name"`
@@ -86,71 +90,13 @@ type Cep struct {
 }
 
 func main() {
-
-	cep := flag.String("cep", "", "CEP to be searched")
-
-	flag.Parse()
-
-	if *cep == "" {
-		fmt.Println("Error: CEP is required.")
-		fmt.Println("Example: -cep=22222-222")
-		os.Exit(1)
+	http.HandleFunc("/cep", cepHandler)
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
 	}
-
-	if len(*cep) < 9 {
-		fmt.Println("Código HTTP: 422")
-		fmt.Println("Mensagem: invalid zipcode")
-		return
-	}
-
-	configs, err := configs.LoadConfig(".")
-	apiKey := configs.API_KEY
-	if err != nil {
-		fmt.Println("Código HTTP: 500")
-		fmt.Println(`Mensagem: internal server error`)
-		return
-	}
-
-	c, err := getCep(*cep)
-	if err != nil || c == (Cep{}) {
-		fmt.Println("Código HTTP: 404")
-		fmt.Println(`Mensagem: can not find zipcode`)
-		return
-	}
-
-	type viacepError struct {
-		Erro bool `json:"erro"`
-	}
-	var errCheck viacepError
-
-	cepJson, _ := json.Marshal(c)
-	json.Unmarshal(cepJson, &errCheck)
-	if errCheck.Erro {
-		fmt.Println("Código HTTP: 404")
-		fmt.Println(`Mensagem: can not find zipcode`)
-		return
-	}
-
-	location := removeAccents(c.Localidade)
-
-	weather, err := getWeather(location, apiKey)
-	if err != nil {
-		fmt.Println("Código HTTP: 500")
-		fmt.Println(`Mensagem: internal server error`)
-		return
-	}
-
-	response := map[string]float64{
-		"temp_C": weather.Current.TempC,
-		"temp_F": convertToFahrenheit(weather.Current.TempC),
-		"temp_K": convertToKelvin(weather.Current.TempC),
-	}
-	respJson, _ := json.Marshal(response)
-	fmt.Println("Código HTTP: 200")
-	fmt.Println(`City Name: ` + weather.Location.Name)
-	fmt.Println(`City Region: ` + weather.Location.Region)
-	fmt.Println(`City Country: ` + weather.Location.Country)
-	fmt.Printf("Response Body: %s\n", respJson)
+	log.Printf("Listening on port %s", port)
+	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 
 func getCep(cep string) (Cep, error) {
@@ -205,4 +151,83 @@ func removeAccents(s string) string {
 		return s
 	}
 	return output
+}
+
+func loadConfig(path string) (*conf, error) {
+	var cfg *conf
+	viper.SetConfigName("app_config")
+	viper.SetConfigType("env")
+	viper.AddConfigPath(path)
+	viper.SetConfigFile(".env")
+	viper.AutomaticEnv()
+
+	err := viper.ReadInConfig()
+	if err != nil {
+		panic(err)
+	}
+
+	err = viper.Unmarshal(&cfg)
+	if err != nil {
+		panic(err)
+	}
+
+	return cfg, err
+}
+
+func cepHandler(w http.ResponseWriter, r *http.Request) {
+	cep := r.URL.Query().Get("cep")
+	if cep == "" {
+		http.Error(w, "CEP is required! Example: /cep?cep=22222-222", http.StatusBadRequest)
+		return
+	}
+
+	if len(cep) < 9 {
+		http.Error(w, "invalid zipcode", http.StatusUnprocessableEntity)
+		return
+	}
+
+	configs, err := loadConfig(".")
+	apiKey := configs.API_KEY
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	c, err := getCep(cep)
+	if err != nil || c == (Cep{}) {
+		http.Error(w, "can not find zipcode", http.StatusNotFound)
+		return
+	}
+
+	type viacepError struct {
+		Erro bool `json:"erro"`
+	}
+	var errCheck viacepError
+
+	cepJson, _ := json.Marshal(c)
+	json.Unmarshal(cepJson, &errCheck)
+	if errCheck.Erro {
+		http.Error(w, "can not find zipcode", http.StatusNotFound)
+		return
+	}
+
+	location := removeAccents(c.Localidade)
+
+	weather, err := getWeather(location, apiKey)
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{
+		"city_name":    weather.Location.Name,
+		"city_region":  weather.Location.Region,
+		"city_country": weather.Location.Country,
+		"temp_C":       weather.Current.TempC,
+		"temp_F":       convertToFahrenheit(weather.Current.TempC),
+		"temp_K":       convertToKelvin(weather.Current.TempC),
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+
 }

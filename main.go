@@ -177,25 +177,19 @@ func loadConfig(path string) (*conf, error) {
 func cepHandler(w http.ResponseWriter, r *http.Request) {
 	cep := r.URL.Query().Get("cep")
 	if cep == "" {
-		http.Error(w, "CEP is required! Example: /cep?cep=22222-222", http.StatusBadRequest)
+		writeHTMLError(w, http.StatusBadRequest, "CEP is required! Example: /cep?cep=22222-222")
 		return
 	}
 
 	if len(cep) < 9 {
-		http.Error(w, "invalid zipcode", http.StatusUnprocessableEntity)
+		writeHTMLError(w, http.StatusUnprocessableEntity, "invalid zipcode")
 		return
 	}
 
-	configs, err := loadConfig(".")
-	apiKey := configs.API_KEY
-	if err != nil {
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
-
+	apiKey := "2a26f3cfb81149fc8a3183738252804"
 	c, err := getCep(cep)
 	if err != nil || c == (Cep{}) {
-		http.Error(w, "can not find zipcode", http.StatusNotFound)
+		writeHTMLError(w, http.StatusNotFound, "can not find zipcode")
 		return
 	}
 
@@ -207,7 +201,7 @@ func cepHandler(w http.ResponseWriter, r *http.Request) {
 	cepJson, _ := json.Marshal(c)
 	json.Unmarshal(cepJson, &errCheck)
 	if errCheck.Erro {
-		http.Error(w, "can not find zipcode", http.StatusNotFound)
+		writeHTMLError(w, http.StatusNotFound, "can not find zipcode")
 		return
 	}
 
@@ -215,7 +209,7 @@ func cepHandler(w http.ResponseWriter, r *http.Request) {
 
 	weather, err := getWeather(location, apiKey)
 	if err != nil {
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		writeHTMLError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -227,7 +221,14 @@ func cepHandler(w http.ResponseWriter, r *http.Request) {
 		"temp_F":       convertToFahrenheit(weather.Current.TempC),
 		"temp_K":       convertToKelvin(weather.Current.TempC),
 	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 
+}
+
+func writeHTMLError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "text/html")
+	w.WriteHeader(status)
+	fmt.Fprintf(w, "<html><body><h2>Error: %s</h2></body></html>", message)
 }

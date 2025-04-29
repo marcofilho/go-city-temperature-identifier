@@ -186,7 +186,14 @@ func cepHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	apiKey := "2a26f3cfb81149fc8a3183738252804"
+	config, err := loadConfig(".")
+	if err != nil {
+		writeHTMLError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	apiKey := config.API_KEY
+
 	c, err := getCep(cep)
 	if err != nil || c == (Cep{}) {
 		writeHTMLError(w, http.StatusNotFound, "can not find zipcode")
